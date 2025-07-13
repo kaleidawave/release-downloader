@@ -1,0 +1,1 @@
+- Downloads releases from GitHub repositories

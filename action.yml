@@ -1,0 +1,44 @@
+name: release-downloader
+description: Download releases from GitHub releases
+author: kaleidawave
+branding:
+  icon: arrow-up-circle
+  color: red
+
+inputs:
+  items:
+    description: A comma separated list of items to download
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+  - id: run
+    run: |
+      IFS=',' read -ra entries <<< '${{ inputs.items }}'
+
+      mkdir bin
+
+      # Loop through each entry
+      for entry in "${entries[@]}"; do
+        # Extract owner and the rest
+        owner="${entry%%/*}"
+        rest="${entry#*/}"
+
+        # Extract repository and the rest
+        repository="${rest%%@*}"
+        rest="${rest#*@}"
+
+        # Extract version and item
+        version="${rest%%[*}"
+        item="${rest#*[}"
+        item="${item%]}"  # remove trailing ]
+
+        gh release download -R "$owner/$repository" $version -p $item -D bin
+
+        # TODO only if binary
+        chmod +x "./bin/$item"
+      done
+
+      echo "$(pwd)/bin" >> "$GITHUB_PATH"
+    shell: bash
