@@ -36,8 +36,17 @@ runs:
 
         gh release download -R "$owner/$repository" $version -p $item -D bin
 
-        # TODO only if binary
-        chmod +x "./bin/$item"
+      done
+
+      gunzip bin/*
+      tar -xf bin/*.tar -C bin --strip-components 1 --overwrite
+
+      for file in bin/*; do 
+        if [ -f "$file" ]; then 
+          if head -c 4 "$file" | grep -q $'\x7fELF'; then
+            chmod +x "$file"
+          fi
+        fi 
       done
 
       echo "$(pwd)/bin" >> "$GITHUB_PATH"
