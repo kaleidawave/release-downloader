@@ -38,10 +38,11 @@ runs:
 
       done
 
-      gunzip bin/*
+      gunzip bin/*.gz
       tar -xf bin/*.tar -C bin --strip-components 1 --overwrite
 
-      for file in bin/*; do 
+      for file in bin/*; do
+        echo "$file"
         if [ -f "$file" ]; then 
           if head -c 4 "$file" | grep -q $'\x7fELF'; then
             chmod +x "$file"
