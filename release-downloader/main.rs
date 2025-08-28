@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use mashrl::{HTTP::Headers, make_request};
+use mashrl::{HTTP::{Headers, ResponseCode}, make_request};
 use simple_json_parser::{JSONKey, RootJSONValue, parse as parse_json};
 
 #[cfg(target_os = "windows")]
@@ -88,6 +88,10 @@ fn get_asset_urls_and_names(
 
     let response = make_request("api.github.com", &path, &headers)?;
 
+    if response.code != ResponseCode::OK {
+        return Err(format!("could not make request, repository or user may not exist").into());
+    }
+
     // Relies on fact keys are in order
     let mut download_next_release = false;
     let mut name: &str = "";
@@ -114,6 +118,10 @@ fn get_asset_urls_and_names(
                         let RootJSONValue::String(url) = value else {
                             panic!("expected asset url to be string")
                         };
+                        
+                        // TODO temp
+                        eprintln!("downloading {name} ({url})");
+
                         assets.push((name.to_owned(), url.to_owned()));
                     }
                 }
@@ -178,7 +186,7 @@ fn download(name: &str, url: &str, to: &str, headers: &Headers<'_>) -> ProcessRe
         }
 
         #[cfg(unix)]
-        if is_elf_binary {
+        {
             use std::os::unix::fs::PermissionsExt;
             let is_elf_binary = response.body.starts_with(b"\x7fELF");
             if is_elf_binary {
