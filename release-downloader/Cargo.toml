@@ -1,0 +1,17 @@
+[package]
+name = "release-downloader"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "release-downloader"
+path = "main.rs"
+
+[dependencies]
+simple-json-parser = "0.0.5"
+tar = "0.4.44"
+flate2 = "1.1.2"
+mashrl = "0.0.1"
+
+[target.'cfg(windows)'.dependencies]
+zip = "4.3.0"
