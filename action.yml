@@ -13,43 +13,21 @@ inputs:
 runs:
   using: "composite"
   steps:
-  - id: run
-    run: |
-      IFS=',' read -ra entries <<< '${{ inputs.items }}'
-
-      BIN="$HOME/.local/bin"
-      mkdir -p $BIN
-
-      # Loop through each entry
-      for entry in "${entries[@]}"; do
-        # Extract owner and the rest
-        owner="${entry%%/*}"
-        rest="${entry#*/}"
-
-        # Extract repository and the rest
-        repository="${rest%%@*}"
-        rest="${rest#*@}"
-
-        # Extract version and item
-        version="${rest%%[*}"
-        item="${rest#*[}"
-        item="${item%]}"  # remove trailing ]
-
-        gh release download -R "$owner/$repository" $version -p $item -D $BIN
-
-      done
-
-      gunzip "$BIN/*.gz"
-      tar -xf "$BIN/*.tar" -C $BIN --strip-components 1 --overwrite
-
-      for file in "$BIN/*"; do
-        echo "$file"
-        if [ -f "$file" ]; then 
-          if head -c 4 "$file" | grep -q $'\x7fELF'; then
-            chmod +x "$file"
-          fi
-        fi
-      done
-
-      echo "$BIN" >> "$GITHUB_PATH"
+  - id: run-linux
     shell: bash
+    if: ${{ runner.os == 'Linux' }}
+    run: |
+      curl -L 'https://github.com/kaleidawave/release-downloader/releases/download/assets/release-downloader' > out
+      chmod +x ./out
+      ./out '${{ inputs.items }}'
+
+  - id: run-windows
+    shell: bash
+    if: ${{ runner.os == 'Windows' }}
+    run: |
+      curl -L 'https://github.com/kaleidawave/release-downloader/releases/download/assets/release-downloader.exe' > out.exe
+      ./out.exe '${{ inputs.items }}'
+
+  - id: set-path
+    shell: bash
+    run: echo "$HOME/.local/bin" > "$GITHUB_PATH"
