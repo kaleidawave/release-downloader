@@ -2,7 +2,10 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use mashrl::{HTTP::{Headers, ResponseCode}, make_request};
+use mashrl::{
+    HTTP::{Headers, ResponseCode},
+    make_request,
+};
 use simple_json_parser::{JSONKey, RootJSONValue, parse as parse_json};
 
 #[cfg(target_os = "windows")]
@@ -118,7 +121,7 @@ fn get_asset_urls_and_names(
                         let RootJSONValue::String(url) = value else {
                             panic!("expected asset url to be string")
                         };
-                        
+
                         // TODO temp
                         eprintln!("downloading {name} ({url})");
 
@@ -173,6 +176,10 @@ fn download(name: &str, url: &str, to: &str, headers: &Headers<'_>) -> ProcessRe
     let path = std::path::Path::new(&p);
     let file = fs::File::create(path)?;
     let mut writer = BufWriter::new(file);
+
+    #[allow(unused)]
+    let is_elf_binary = response.body.starts_with(b"\x7fELF");
+
     writer.write_all(&response.body)?;
 
     if name.ends_with(".tar.gz") {
@@ -186,12 +193,10 @@ fn download(name: &str, url: &str, to: &str, headers: &Headers<'_>) -> ProcessRe
         }
 
         #[cfg(unix)]
-        {
+        if is_elf_binary {
             use std::os::unix::fs::PermissionsExt;
-            let is_elf_binary = response.body.starts_with(b"\x7fELF");
-            if is_elf_binary {
-                file.set_permissions(fs::Permissions::from_mode(0o777))?;
-            }
+
+            fs::set_permissions(path, fs::Permissions::from_mode(0o777))?;
         }
     }
 
