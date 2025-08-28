@@ -80,7 +80,7 @@ fn get_asset_urls_and_names(
     owner: &str,
     repository: &str,
     tag: &str,
-    _pattern: utilities::Pattern<'_>,
+    pattern: utilities::Pattern<'_>,
     headers: &Headers<'_>,
 ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
     let path = if let "latest" = tag {
@@ -112,18 +112,15 @@ fn get_asset_urls_and_names(
                     // let origin = value.strip_suffix("tar").unwrap_or(value);
                     // let origin = value.strip_suffix("zip").unwrap_or(value);
 
-                    download_next_release =
-                        value.contains(OS_MATCHER) && value.contains(ARCH_MATCHER);
-                    // TODO pattern
+                    download_next_release = value.contains(OS_MATCHER)
+                        && value.contains(ARCH_MATCHER)
+                        && pattern.matches(value);
                 }
                 JSONKey::Slice("browser_download_url") => {
                     if download_next_release {
                         let RootJSONValue::String(url) = value else {
                             panic!("expected asset url to be string")
                         };
-
-                        // TODO temp
-                        eprintln!("downloading {name} ({url})");
 
                         assets.push((name.to_owned(), url.to_owned()));
                     }
@@ -203,7 +200,6 @@ fn download(name: &str, url: &str, to: &str, headers: &Headers<'_>) -> ProcessRe
     Ok(())
 }
 
-#[allow(dead_code)]
 pub mod utilities {
     #[derive(Debug, Clone, Copy)]
     pub struct Pattern<'a>(&'a str);
@@ -215,6 +211,15 @@ pub mod utilities {
 
         pub fn all() -> Self {
             Self("*")
+        }
+
+        // TODO temp
+        pub fn matches(&self, value: &str) -> bool {
+            if let "*" = self.0 {
+                true
+            } else {
+                value.contains(self.0)
+            }
         }
     }
 
