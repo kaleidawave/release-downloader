@@ -221,7 +221,7 @@ pub fn write_binary(to: &str, name: &str, mut reader: impl Read) -> Result<(), B
             let mut start = [0; 4];
             file.read_exact(&mut start);
             if b"\x7fELF" == &start {
-                fs::set_permissions(file, fs::Permissions::from_mode(0o777))?;
+                file.set_permissions(fs::Permissions::from_mode(0o777))?;
             }
         }
     }
