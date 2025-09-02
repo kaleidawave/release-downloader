@@ -5,8 +5,6 @@ on:
 
 jobs:
   publish-libraries:
-    if: false
-
     permissions: write-all
 
     strategy:
@@ -36,8 +34,8 @@ jobs:
 
       - run: cargo publish --allow-dirty
         working-directory: ${{ matrix.library }}
-        # env:
-          # CARGO_REGISTRY_TOKEN: $ { { secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           # CARGO_REGISTRY_TOKEN: $ { { steps.auth.outputs.token }}
 
       - name: Push updated Cargo.toml
@@ -45,11 +43,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -u .
-          git commit -m "Release: ${{ steps.update-version.outputs.mashrl }}"
+          git commit -m "Release: ${{ steps.update-version.outputs.release-downloader }}"
           git push origin ${{ steps.checkout.outputs.ref }}
 
   publish-assets:
-    # needs: publish-libraries
+    needs: publish-libraries
 
     permissions: write-all
 

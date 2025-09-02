@@ -1,0 +1,1 @@
+Currently only supports GitHub as a source and host for downloadable assets
