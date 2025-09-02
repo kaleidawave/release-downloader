@@ -215,11 +215,12 @@ pub fn write_binary(to: &str, name: &str, mut reader: impl Read) -> Result<(), B
 
         #[cfg(unix)]
         {
+            use std::fs;
             use std::os::unix::fs::PermissionsExt;
 
             let mut start = [0; 4];
             file.read_exact(&mut start);
-            if b"\x7fELF" == start {
+            if b"\x7fELF" == &start {
                 fs::set_permissions(file, fs::Permissions::from_mode(0o777))?;
             }
         }
