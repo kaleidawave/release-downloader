@@ -17,28 +17,18 @@ inputs:
 runs:
   using: "composite"
   steps:
-  - id: make-path-linux
-    if: ${{ runner.os == 'Linux' }}
+  - id: run-linux
     shell: bash
+    if: ${{ runner.os == 'Linux' || runner.os == 'macOS' }}
     run: |
       mkdir -p "$HOME/.local/bin"
       echo "$HOME/.local/bin" > "$GITHUB_PATH"
 
-  - id: make-path-windows
-    if: ${{ runner.os == 'Linux' }}
-    shell: bash
-    run: |
-      mkdir "$HOME/.local/bin"
-      echo "$HOME/.local/bin" > "$GITHUB_PATH"
-
-  - id: run-linux
-    shell: bash
-    if: ${{ runner.os == 'Linux' }}
-    run: |
       curl -L 'https://github.com/kaleidawave/release-downloader/releases/download/assets/release-downloader' > "$HOME/.local/bin/release-downloader"
       chmod +x "$HOME/.local/bin/release-downloader"
+
       if [ "${{ inputs.trace }}" == "true" ]; then
-        echo "Running on Linux"
+        echo "Running on unix"
         release-downloader '${{ inputs.items }}' --trace
       else
         release-downloader '${{ inputs.items }}'
@@ -48,8 +38,10 @@ runs:
     shell: bash
     if: ${{ runner.os == 'Windows' }}
     run: |
+      mkdir "$HOME/.local/bin"
+
       curl -L 'https://github.com/kaleidawave/release-downloader/releases/download/assets/release-downloader' > "$HOME/.local/bin/release-downloader.exe"
-      curl -L 'https://github.com/kaleidawave/release-downloader/releases/download/assets/release-downloader.exe' > out.exe
+
       if [ "${{ inputs.trace }}" == "true" ]; then
         echo "Running on Windows"
         release-downloader '${{ inputs.items }}' --trace
