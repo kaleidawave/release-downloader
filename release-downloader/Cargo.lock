@@ -316,6 +316,8 @@ dependencies = [
 [[package]]
 name = "mashrl"
 version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "957d466dd156ce0814b1079f2ba9099c17897c1f6f3b0bc88ff99db94d0a4540"
 dependencies = [
  "native-tls",
 ]
@@ -443,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "release-downloader"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "flate2",
  "mashrl",
