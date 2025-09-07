@@ -28,14 +28,22 @@ flate2 = { version = "1.1.2", optional = true }
 tar = { version = "0.4.44", optional = true }
 
 # For downloading and extracing API results
-mashrl = "0.0.3"
+mashrl = "0.0.4"
 simple-json-parser = "0.0.5"
 
 # For the library
 self-replace = { version = "1.5", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-zip = { version = "4.3.0", optional = true }
+zip = { version = "5", optional = true, default-features = false, features = [
+	"bzip2",
+	"deflate",
+	"lzma",
+	"zstd",
+] }
+
+# [patch.crates-io]
+# mashrl = { path = "../../../experiments/simple-http-requester/mashrl" }
 
 [package.metadata.commands]
 test = "cargo run -- 'kaleidawave/experiments@assets[spectra]' private/bin"

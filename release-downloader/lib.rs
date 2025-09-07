@@ -1,6 +1,6 @@
 use mashrl::{
     HTTP::{Headers, ResponseCode},
-    make_request,
+    make_get_request,
 };
 use simple_json_parser::{JSONKey, RootJSONValue, parse as parse_json};
 
@@ -31,15 +31,17 @@ pub fn get_asset_urls_and_names_from_github_releases(
     tag: &str,
     pattern: utilities::Pattern<'_>,
     github_token: Option<&str>,
+    tracing: bool,
 ) -> Result<Vec<(String, String)>, BoxedError> {
-    let headers = if let Some(token) = github_token {
-        Headers::from_string(format!("Authorization: Bearer {token}"))
-    } else {
-        Headers::empty()
-    };
+    let mut headers = Headers::from_iter([
+        ("Accept", "application/vnd.github+json"),
+        ("X-GitHub-Api-Version", "2022-11-28"),
+        ("User-Agent", "kaleidwave/release-downloader"),
+    ]);
 
-    // TODO should walk pages instead
-    const PER_PAGE: u8 = 100;
+    if let Some(token) = github_token {
+        headers.append("Authorization", &format!("Bearer {token}"));
+    }
 
     // TOOD some releases are included here and so we don't always need to walk
     let release_id: String = {
@@ -49,14 +51,18 @@ pub fn get_asset_urls_and_names_from_github_releases(
             format!("repos/{owner}/{repository}/releases/tags/{tag}")
         };
 
-        let mut response = make_request("api.github.com", &path, &headers)?;
-
-        if response.code != ResponseCode::OK {
-            return Err("could not make request, repository or user may not exist".into());
-        }
+        let mut response = make_get_request("api.github.com", &path, &headers)?;
 
         let mut body = String::new();
         response.body.read_to_string(&mut body)?;
+
+        if response.code != ResponseCode::OK {
+            let message = format!(
+                "could not make request, repository ({repository}) or user ({owner}) may not exist. recieved {code:?} from 'api.github.com/{path}'. Recieved body ({body:?})",
+                code = response.code
+            );
+            return Err(message.into());
+        }
 
         let mut release_id = "".to_owned();
         let _ = parse_json(&body, |keys, value| {
@@ -74,12 +80,19 @@ pub fn get_asset_urls_and_names_from_github_releases(
         release_id
     };
 
+    // TODO should walk pages instead
+    const PER_PAGE: u8 = 100;
+
     let path =
         format!("repos/{owner}/{repository}/releases/{release_id}/assets?per_page={PER_PAGE}");
-    let mut response = make_request("api.github.com", &path, &headers)?;
+    let mut response = make_get_request("api.github.com", &path, &headers)?;
 
     if response.code != ResponseCode::OK {
-        return Err("could not make request, repository or user may not exist".into());
+        return Err(format!(
+            "could not make request for assets. recieved {code:?} from 'api.github.com'",
+            code = response.code
+        )
+        .into());
     }
 
     let mut body = String::new();
@@ -92,7 +105,6 @@ pub fn get_asset_urls_and_names_from_github_releases(
     let mut asset_idx = 0;
 
     let _ = parse_json(&body, |keys, value| {
-        // eprintln!("{keys:?} to {value:?}");
         if let [JSONKey::Index(idx), key] = keys {
             match key {
                 JSONKey::Slice("label") => {
@@ -103,11 +115,20 @@ pub fn get_asset_urls_and_names_from_github_releases(
                     // let origin = value.strip_suffix("tar").unwrap_or(value);
                     // let origin = value.strip_suffix("zip").unwrap_or(value);
 
-                    download_next_release = value.contains(OS_MATCHER)
-                        && value.contains(ARCH_MATCHER)
-                        && pattern.matches(value);
+                    let name = if value.is_empty() { name } else { value };
 
-                    // eprintln!("{download_next_release} {value} (pattern={pattern:?})");
+                    download_next_release = name.contains(OS_MATCHER)
+                        && name.contains(ARCH_MATCHER)
+                        && pattern.matches(name);
+
+                    if tracing {
+                        let action = if download_next_release {
+                            "downloading"
+                        } else {
+                            "not downloading"
+                        };
+                        eprintln!("{action} {name:?} (pattern = {pattern:?})");
+                    }
                 }
                 JSONKey::Slice("browser_download_url") => {
                     if download_next_release {
@@ -133,7 +154,9 @@ pub fn get_asset_urls_and_names_from_github_releases(
         }
     });
 
-    eprintln!("Found {asset_idx} assets");
+    if tracing {
+        eprintln!("Scanned {asset_idx} assets");
+    }
 
     Ok(assets)
 }
@@ -142,23 +165,28 @@ pub fn download_from_github(
     url: &str,
     github_token: Option<&str>,
 ) -> Result<impl Read, BoxedError> {
-    let headers = if let Some(token) = github_token {
-        Headers::from_string(format!("Authorization: Bearer {token}"))
-    } else {
-        Headers::empty()
-    };
+    let mut headers = Headers::from_iter([
+        // ("Accept", "application/vnd.github+json"),
+        // ("X-GitHub-Api-Version", "2022-11-28"),
+        ("User-Agent", "kaleidwave/release-downloader"),
+    ]);
+
+    if let Some(token) = github_token {
+        headers.append("Authorization", &format!("Bearer {token}"));
+    }
 
     let actual_asset_url = {
         let url = url
             .strip_prefix("https://github.com")
             .ok_or_else(|| format!("Asset url {url:?} does not start with 'https://github.com'"))?;
 
-        let response = make_request("github.com", url, &headers)?;
+        let response = make_get_request("github.com", url, &headers)?;
 
         let location = response
             .headers
             .iter()
             .find_map(|(key, value)| (key == "Location").then_some(value.to_owned()));
+
         location.ok_or("no location")?
     };
 
@@ -171,22 +199,9 @@ pub fn download_from_github(
         return Err("asset url does not start with 'https://' and have path".into());
     };
 
-    let response = make_request(base, url, &headers)?;
+    let response = make_get_request(base, url, &headers)?;
 
     Ok(response.body)
-}
-
-#[cfg(feature = "self-update")]
-pub fn replace_self(mut content: impl Read) -> Result<(), BoxedError> {
-    let temporary_binary_name = "temporary";
-    let mut file = File::create(temporary_binary_name)?;
-
-    std::io::copy(&mut content, &mut file)?;
-
-    self_replace::self_replace(temporary_binary_name)?;
-    std::fs::remove_file(temporary_binary_name)?;
-
-    Ok(())
 }
 
 pub fn write_binary(to: &str, name: &str, mut reader: impl Read) -> Result<(), BoxedError> {
@@ -209,7 +224,7 @@ pub fn write_binary(to: &str, name: &str, mut reader: impl Read) -> Result<(), B
         }
 
         let mut options = File::options();
-        options.write(true).truncate(true).read(true);
+        options.write(true).truncate(true).read(true).create(true);
         let mut file = options.open(path)?;
         std::io::copy(&mut reader, &mut file)?;
 
@@ -220,11 +235,83 @@ pub fn write_binary(to: &str, name: &str, mut reader: impl Read) -> Result<(), B
 
             let mut start = [0; 4];
             file.read_exact(&mut start);
-            if b"\x7fELF" == &start {
-                file.set_permissions(fs::Permissions::from_mode(0o777))?;
-            }
         }
     }
+
+    Ok(())
+}
+
+pub fn move_if_binary(mut content: impl std::io::Read, out: &Path) -> Result<(), BoxedError> {
+    use std::fs::File;
+    use std::io::{Write, copy};
+
+    let mut start = [0; 4];
+    content.read_exact(&mut start)?;
+
+    let should_write =
+        (cfg!(unix) && b"\x7fELF" == &start) || (cfg!(windows) && start.starts_with(b"MZ"));
+
+    if should_write {
+        let mut file = File::create(out)?;
+        // Writes bytes that were pulled out
+        let _ = file.write(&start)?;
+        let _ = copy(&mut content, &mut file)?;
+
+        // Set permissions
+        #[cfg(unix)]
+        file.set_permissions(
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777),
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn extract_tar(reader: impl Read, output_dir: &Path) -> Result<(), BoxedError> {
+    let mut archive = tar::Archive::new(reader);
+    // archive.set_preserve_permissions(true);
+    let entries = archive.entries()?;
+    for entry in entries {
+        let entry = entry?;
+        if let Some(name) = entry.path()?.file_name() {
+            let path = output_dir.join(name);
+            move_if_binary(entry, &path)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn extract_tar_gz(reader: impl Read, output_dir: &Path) -> Result<(), BoxedError> {
+    let decompressor = flate2::read::GzDecoder::new(reader);
+    extract_tar(decompressor, output_dir)
+}
+
+#[cfg(windows)]
+pub fn extract_zip(reader: impl Read + std::io::Seek, output_dir: &Path) -> Result<(), BoxedError> {
+    let mut archive = zip::ZipArchive::new(reader)?;
+    for i in 0..archive.len() {
+        let entry = archive.by_index(i)?;
+        if entry.is_file()
+            && let Some(name) = Path::new(entry.name()).file_name()
+        {
+            let path = output_dir.join(name);
+            move_if_binary(entry, &path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// For updating the current program
+#[cfg(feature = "self-update")]
+pub fn replace_self(mut content: impl Read) -> Result<(), BoxedError> {
+    let temporary_binary_name = "temporary";
+    let mut file = File::create(temporary_binary_name)?;
+
+    std::io::copy(&mut content, &mut file)?;
+
+    self_replace::self_replace(temporary_binary_name)?;
+    std::fs::remove_file(temporary_binary_name)?;
 
     Ok(())
 }
@@ -247,56 +334,13 @@ pub mod utilities {
             if let "*" = self.0 {
                 true
             } else {
-                value.contains(self.0)
+                for part in self.0.split('|') {
+                    if value.contains(part) {
+                        return true;
+                    }
+                }
+                false
             }
         }
     }
-}
-
-pub fn extract_tar(reader: impl Read, output_dir: &Path) -> Result<(), BoxedError> {
-    let mut archive = tar::Archive::new(reader);
-    archive.unpack(output_dir)?;
-    Ok(())
-}
-
-pub fn extract_tar_gz(reader: impl Read, output_dir: &Path) -> Result<(), BoxedError> {
-    let decompressor = flate2::read::GzDecoder::new(reader);
-    let mut archive = tar::Archive::new(decompressor);
-    archive.unpack(output_dir)?;
-    Ok(())
-}
-
-#[cfg(windows)]
-pub fn extract_zip(reader: impl Read + std::io::Seek, output_dir: &Path) -> Result<(), BoxedError> {
-    use std::fs;
-    use std::io;
-    use zip::ZipArchive;
-
-    let mut archive = ZipArchive::new(reader)?;
-
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let out_path = output_dir.join(file.mangled_name());
-
-        if file.name().ends_with('/') {
-            fs::create_dir_all(&out_path)?;
-        } else {
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut outfile = fs::File::create(&out_path)?;
-            io::copy(&mut file, &mut outfile)?;
-        }
-
-        // TODO is this needed?
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = file.unix_mode() {
-                fs::set_permissions(&out_path, fs::Permissions::from_mode(mode))?;
-            }
-        }
-    }
-
-    Ok(())
 }
