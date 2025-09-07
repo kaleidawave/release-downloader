@@ -10,10 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = env::args().skip(1);
 
     let first_argument = arguments.next();
-    let endpoint = first_argument.as_deref().unwrap_or("help");
+    let endpoint = first_argument.as_deref().unwrap_or("--help");
 
     match endpoint {
-        "info" => {
+        "info" | "--help" => {
             let run_id = option_env!("GITHUB_RUN_ID");
             let date = option_env!("GIT_LAST_COMMIT").unwrap_or_default();
             let after = run_id
@@ -24,8 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "release-downloader{after} (powered by 'mashrl': minimal-and-simple-http-request-library)"
             );
             eprintln!(
-                "find releases with 'list' otherwise download binaries from comma-separated list of 'owner/repository@tag[name]' location"
+                "download binaries from comma-separated list of 'owner/repository@tag[name]' location"
             );
+            eprintln!("run with '--trace' to show intermediate findings");
+            // eprintln!("release-downloader info shows information about releases")
         }
         "list" => {
             todo!("print options");
@@ -98,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Downloading {url:?}");
                     }
                     let content = download_from_github(&url, github_token)?;
-                    write_binary(&destination, &name, content)?;
+                    write_binary(&destination, &name, content, trace)?;
                 }
             }
         }

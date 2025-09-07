@@ -31,7 +31,7 @@ pub fn get_asset_urls_and_names_from_github_releases(
     tag: &str,
     pattern: utilities::Pattern<'_>,
     github_token: Option<&str>,
-    tracing: bool,
+    trace: bool,
 ) -> Result<Vec<(String, String)>, BoxedError> {
     let mut headers = Headers::from_iter([
         ("Accept", "application/vnd.github+json"),
@@ -121,7 +121,7 @@ pub fn get_asset_urls_and_names_from_github_releases(
                         && name.contains(ARCH_MATCHER)
                         && pattern.matches(name);
 
-                    if tracing {
+                    if trace {
                         let action = if download_next_release {
                             "downloading"
                         } else {
@@ -154,7 +154,7 @@ pub fn get_asset_urls_and_names_from_github_releases(
         }
     });
 
-    if tracing {
+    if trace {
         eprintln!("Scanned {asset_idx} assets");
     }
 
@@ -204,44 +204,52 @@ pub fn download_from_github(
     Ok(response.body)
 }
 
-pub fn write_binary(to: &str, name: &str, mut reader: impl Read) -> Result<(), BoxedError> {
+pub fn write_binary(
+    to: &str,
+    name: &str,
+    mut reader: impl Read,
+    trace: bool,
+) -> Result<(), BoxedError> {
     let p = format!("{to}/{name}");
     let path = Path::new(&p);
     let to = Path::new(to);
 
     if name.ends_with(".tar.gz") {
-        extract_tar_gz(reader, to)?;
+        extract_tar_gz(reader, to, trace)?;
     } else if name.ends_with(".tar") {
-        extract_tar(reader, to)?;
-    } else {
+        extract_tar(reader, to, trace)?;
+    } else if name.ends_with(".zip") {
         #[cfg(windows)]
-        if name.ends_with(".zip") {
+        {
+            // We put into `Cursor` here so reader implements `Seek`
             let mut buffer = Vec::new();
             reader.read_to_end(&mut buffer)?;
             let reader = std::io::Cursor::new(&buffer);
-            extract_zip(reader, to)?;
-            return Ok(());
-        }
+            extract_zip(reader, to, trace)
+        }?;
 
+        #[cfg(not(windows))]
+        panic!("cannot unzip on `not(windows)`")
+    } else {
         let mut options = File::options();
         options.write(true).truncate(true).read(true).create(true);
         let mut file = options.open(path)?;
         std::io::copy(&mut reader, &mut file)?;
 
-        #[cfg(unix)]
-        {
-            use std::fs;
-            use std::os::unix::fs::PermissionsExt;
-
-            let mut start = [0; 4];
-            file.read_exact(&mut start);
+        if trace {
+            eprintln!("Writing to {path:?}");
         }
+
+        #[cfg(unix)]
+        file.set_permissions(
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777),
+        )?;
     }
 
     Ok(())
 }
 
-pub fn move_if_binary(mut content: impl std::io::Read, out: &Path) -> Result<(), BoxedError> {
+pub fn move_if_binary(mut content: impl Read, path: &Path, trace: bool) -> Result<(), BoxedError> {
     use std::fs::File;
     use std::io::{Write, copy};
 
@@ -252,8 +260,8 @@ pub fn move_if_binary(mut content: impl std::io::Read, out: &Path) -> Result<(),
         (cfg!(unix) && b"\x7fELF" == &start) || (cfg!(windows) && start.starts_with(b"MZ"));
 
     if should_write {
-        let mut file = File::create(out)?;
-        // Writes bytes that were pulled out
+        let mut file = File::create(path)?;
+        // Writes bytes that were pulled path
         let _ = file.write(&start)?;
         let _ = copy(&mut content, &mut file)?;
 
@@ -262,12 +270,16 @@ pub fn move_if_binary(mut content: impl std::io::Read, out: &Path) -> Result<(),
         file.set_permissions(
             <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777),
         )?;
+
+        if trace {
+            eprintln!("Writing to {path:?}");
+        }
     }
 
     Ok(())
 }
 
-pub fn extract_tar(reader: impl Read, output_dir: &Path) -> Result<(), BoxedError> {
+pub fn extract_tar(reader: impl Read, output_dir: &Path, trace: bool) -> Result<(), BoxedError> {
     let mut archive = tar::Archive::new(reader);
     // archive.set_preserve_permissions(true);
     let entries = archive.entries()?;
@@ -275,19 +287,23 @@ pub fn extract_tar(reader: impl Read, output_dir: &Path) -> Result<(), BoxedErro
         let entry = entry?;
         if let Some(name) = entry.path()?.file_name() {
             let path = output_dir.join(name);
-            move_if_binary(entry, &path)?;
+            move_if_binary(entry, &path, trace)?;
         }
     }
     Ok(())
 }
 
-pub fn extract_tar_gz(reader: impl Read, output_dir: &Path) -> Result<(), BoxedError> {
+pub fn extract_tar_gz(reader: impl Read, output_dir: &Path, trace: bool) -> Result<(), BoxedError> {
     let decompressor = flate2::read::GzDecoder::new(reader);
-    extract_tar(decompressor, output_dir)
+    extract_tar(decompressor, output_dir, trace)
 }
 
 #[cfg(windows)]
-pub fn extract_zip(reader: impl Read + std::io::Seek, output_dir: &Path) -> Result<(), BoxedError> {
+pub fn extract_zip(
+    reader: impl Read + std::io::Seek,
+    output_dir: &Path,
+    trace: bool,
+) -> Result<(), BoxedError> {
     let mut archive = zip::ZipArchive::new(reader)?;
     for i in 0..archive.len() {
         let entry = archive.by_index(i)?;
@@ -295,7 +311,7 @@ pub fn extract_zip(reader: impl Read + std::io::Seek, output_dir: &Path) -> Resu
             && let Some(name) = Path::new(entry.name()).file_name()
         {
             let path = output_dir.join(name);
-            move_if_binary(entry, &path)?;
+            move_if_binary(entry, &path, trace)?;
         }
     }
 
