@@ -30,7 +30,7 @@ jobs:
         uses: kaleidawave/crates-release-gh-action@improvements
         with:
           # $ {{ github.event.inputs.version }}
-          version: PATCH
+          version: patch
           crates-token: ${{ steps.auth.outputs.token }}
 
       - name: Push updated Cargo.toml
