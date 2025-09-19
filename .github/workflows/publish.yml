@@ -3,7 +3,7 @@ name: Build and publish libraries and assets
 on:
   push:
     paths:
-      - '**.rs'
+      - release-downloader/**
 
 jobs:
   publish-libraries:
@@ -32,6 +32,7 @@ jobs:
           # $ {{ github.event.inputs.version }}
           version: patch
           crates-token: ${{ steps.auth.outputs.token }}
+          working-directory: release-downloader
 
       - name: Push updated Cargo.toml
         run: |

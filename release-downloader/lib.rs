@@ -45,12 +45,11 @@ impl Default for DownloadOptions<'static> {
     }
 }
 
-/// returns pairs for names and urls
-pub fn get_asset_urls_and_names_from_github_releases(
+fn get_assets_from_github_releases(
     owner: &str,
     repository: &str,
     options: DownloadOptions<'_>,
-) -> Result<Vec<(String, String)>, BoxedError> {
+) -> Result<mashrl::HTTP::Response<'static>, BoxedError> {
     let mut headers = Headers::from_iter([
         ("Accept", "application/vnd.github+json"),
         ("X-GitHub-Api-Version", "2022-11-28"),
@@ -103,15 +102,26 @@ pub fn get_asset_urls_and_names_from_github_releases(
 
     let path =
         format!("repos/{owner}/{repository}/releases/{release_id}/assets?per_page={PER_PAGE}");
-    let mut response = make_get_request("api.github.com", &path, &headers)?;
+    let response = make_get_request("api.github.com", &path, &headers)?;
 
-    if response.code != ResponseCode::OK {
-        return Err(format!(
+    if response.code == ResponseCode::OK {
+        Ok(response)
+    } else {
+        Err(format!(
             "could not make request for assets. recieved {code:?} from 'api.github.com'",
             code = response.code
         )
-        .into());
+        .into())
     }
+}
+
+/// returns pairs for names and urls
+pub fn get_asset_urls_and_names_from_github_releases(
+    owner: &str,
+    repository: &str,
+    options: DownloadOptions<'_>,
+) -> Result<Vec<(String, String)>, BoxedError> {
+    let mut response = get_assets_from_github_releases(owner, repository, options)?;
 
     let mut body = String::new();
     response.body.read_to_string(&mut body)?;
@@ -267,9 +277,13 @@ pub fn write_binary(
         #[cfg(unix)]
         {
             let mut buf = [0; 4];
-            if let Ok(_) = file.read_exact(&mut buf)
-                && (&buf == b"\x7fELF" || u32::from_le_bytes(start) == 0xFEEDFACFu32)
-            {
+            // Ignore error here, some files have size < 4
+            let _read_result = file.read_exact(&mut buf);
+            let is_binary = &buf == b"\x7fELF"
+                || u32::from_le_bytes(buf) == 0xFEEDFACFu32
+                || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
+
+            if is_binary {
                 let permission =
                     <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777);
                 file.set_permissions(permission)?;
@@ -289,13 +303,12 @@ pub fn move_if_binary(
     use std::fs::File;
     use std::io::{Write, copy};
 
-    let mut start = [0; 4];
+    let mut buf = [0; 4];
     // Ignore error here, some files have size < 4
-    let _ok = content.read_exact(&mut start);
-
-    let is_binary = &start == b"\x7fELF"
-        || start.starts_with(b"MZ")
-        || u32::from_le_bytes(start) == 0xFEEDFACFu32;
+    let _read_result = content.read_exact(&mut buf);
+    let is_binary = &buf == b"\x7fELF"
+        || u32::from_le_bytes(buf) == 0xFEEDFACFu32
+        || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
 
     if only_binaries && !is_binary {
         return Ok(());
@@ -304,7 +317,7 @@ pub fn move_if_binary(
     let mut file = File::create(path)?;
 
     // Writes bytes that were pulled path
-    let _ = file.write(&start)?;
+    let _ = file.write(&buf)?;
     let _ = copy(&mut content, &mut file)?;
 
     // Set permissions
@@ -386,8 +399,48 @@ pub fn replace_self(mut content: impl Read) -> Result<(), BoxedError> {
     Ok(())
 }
 
+/// returns pairs for names and download counts
+pub fn get_statistics(
+    owner: &str,
+    repository: &str,
+    options: DownloadOptions<'_>,
+) -> Result<Vec<(String, usize)>, BoxedError> {
+    let mut response = get_assets_from_github_releases(owner, repository, options)?;
+
+    let mut body = String::new();
+    response.body.read_to_string(&mut body)?;
+
+    let mut name: &str = "";
+
+    let mut items = Vec::new();
+
+    let _ = parse_json(&body, |keys, value| {
+        if let [JSONKey::Index(_idx), key] = keys {
+            match key {
+                JSONKey::Slice("download_count") => {
+                    let RootJSONValue::Number(count) = value else {
+                        panic!("expected download count to be number")
+                    };
+
+                    items.push((name.to_owned(), count.parse().unwrap()));
+                }
+                JSONKey::Slice("name") => {
+                    if let RootJSONValue::String(name2) = value {
+                        name = name2;
+                    };
+                }
+                _key => {
+                    // eprintln!("{key:?} {value:?}");
+                }
+            }
+        }
+    });
+
+    Ok(items)
+}
+
 pub mod utilities {
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Pattern<'a>(&'a str);
 
     impl<'a> Pattern<'a> {

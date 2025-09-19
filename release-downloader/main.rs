@@ -30,7 +30,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // eprintln!("release-downloader info shows information about releases")
         }
         "list" => {
-            todo!("print options");
+            let owner = arguments.next().expect("owner");
+            let repository = arguments.next().expect("repository");
+            let tag = arguments.next();
+            let options = release_downloader::DownloadOptions {
+                tag: tag.as_deref(),
+                pattern: Pattern::all(),
+                github_token: None,
+                trace: false,
+                match_architecture: false,
+            };
+            let items = release_downloader::get_statistics(&owner, &repository, options)?;
+            for (name, count) in items {
+                println!("{name}: {count} download(s)");
+            }
         }
         argument => {
             let github_token =
@@ -73,19 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fs::create_dir_all(&*destination)?;
 
             for argument in argument.split(',').map(str::trim) {
-                let (owner, rest) = argument.split_once('/').unwrap();
-                let (repository, rest) = rest.split_once(['@', '[']).unwrap_or((rest, "latest"));
-                let (tag, rest) = utilities::split_once_inclusive(rest, '[').unwrap_or((rest, ""));
-
-                let rest = utilities::split_surrounding(rest, ('[', ']'));
-                let pattern = if let Some(pattern) = rest {
-                    Pattern::new(pattern)
-                } else {
-                    Pattern::new(repository)
-                };
-
-                // TODO a bit backwards
-                let tag = if tag == "latest" { None } else { Some(tag) };
+                let (owner, repository, tag, pattern) = utilities::parse_pattern(argument);
 
                 let options = release_downloader::DownloadOptions {
                     tag,
@@ -116,7 +117,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 mod utilities {
-    pub fn split_once_inclusive(on: &str, chr: char) -> Option<(&str, &str)> {
+    use super::Pattern;
+
+    pub fn split_once_inclusive<'a>(on: &'a str, chr: &[char]) -> Option<(&'a str, &'a str)> {
         on.find(chr).map(|idx| on.split_at(idx))
     }
 
@@ -125,6 +128,54 @@ mod utilities {
             on.strip_suffix(after)
         } else {
             None
+        }
+    }
+
+    pub fn parse_pattern(on: &str) -> (&str, &str, Option<&str>, Pattern<'_>) {
+        let (owner, rest) = on.split_once('/').unwrap();
+        let (repository, rest) = split_once_inclusive(rest, &['@', '[']).unwrap_or((rest, ""));
+        let (tag, rest) = if let Some(after) = rest.strip_prefix('@') {
+            let (tag, rest) = split_once_inclusive(after, &['[']).unwrap_or((after, ""));
+            (Some(tag), rest)
+        } else {
+            (None, rest)
+        };
+        let rest = split_surrounding(rest, ('[', ']'));
+        let pattern = if let Some(pattern) = rest {
+            Pattern::new(pattern)
+        } else {
+            Pattern::all()
+        };
+
+        (owner, repository, tag, pattern)
+    }
+
+    #[cfg(test)]
+    mod pattern {
+        use super::{Pattern, parse_pattern};
+
+        #[test]
+        fn full() {
+            let out = parse_pattern("a/b@c[d]");
+            assert_eq!(out, ("a", "b", Some("c"), Pattern::new("d")));
+        }
+
+        #[test]
+        fn elided_tag() {
+            let out = parse_pattern("a/b[d]");
+            assert_eq!(out, ("a", "b", None, Pattern::new("d")));
+        }
+
+        #[test]
+        fn elided_specifier() {
+            let out = parse_pattern("a/b@c");
+            assert_eq!(out, ("a", "b", Some("c"), Pattern::all()));
+        }
+
+        #[test]
+        fn elided_specifier_and_tag() {
+            let out = parse_pattern("a/b");
+            assert_eq!(out, ("a", "b", None, Pattern::all()));
         }
     }
 }
