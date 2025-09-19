@@ -35,61 +35,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         argument => {
             let github_token =
                 env::vars().find_map(|(name, value)| (name == "GH_TOKEN").then_some(value));
+            let github_token = github_token.as_deref();
 
             let home = env::vars().find_map(|(name, value)| (name == "HOME").then_some(value));
 
             let mut trace = false;
+            let mut match_architecture = true;
+            let mut only_binaries = true;
             let mut specified_destination = None;
 
-            // WIP
             for argument in arguments {
-                if let "--trace" = argument.as_str() {
+                if "--trace" == argument {
                     trace = true;
+                } else if "--ignore-architecture" == argument {
+                    match_architecture = false;
+                } else if "--all-assets" == argument {
+                    only_binaries = false;
                 } else {
                     specified_destination = Some(argument);
                 }
             }
 
             let destination = if let Some(path) = specified_destination {
-                path
+                std::borrow::Cow::Owned(path)
             } else if let Some(home) = home {
-                #[cfg(unix)]
-                {
+                let path = if cfg!(unix) {
                     format!("{home}/.local/bin")
-                }
-                #[cfg(not(unix))]
-                {
+                } else {
                     format!("{home}/.tools")
-                }
+                };
+                std::borrow::Cow::Owned(path)
             } else {
                 // TODO ?
-                ".".to_owned()
+                std::borrow::Cow::Borrowed(".")
             };
 
-            fs::create_dir_all(&destination)?;
-
-            let github_token = github_token.as_deref();
+            fs::create_dir_all(&*destination)?;
 
             for argument in argument.split(',').map(str::trim) {
                 let (owner, rest) = argument.split_once('/').unwrap();
                 let (repository, rest) = rest.split_once(['@', '[']).unwrap_or((rest, "latest"));
                 let (tag, rest) = utilities::split_once_inclusive(rest, '[').unwrap_or((rest, ""));
 
-                let pattern = if let Some(pattern) = utilities::split_surrounding(rest, ('[', ']'))
-                {
+                let rest = utilities::split_surrounding(rest, ('[', ']'));
+                let pattern = if let Some(pattern) = rest {
                     Pattern::new(pattern)
                 } else {
                     Pattern::new(repository)
                 };
 
-                let out = get_asset_urls_and_names_from_github_releases(
-                    owner,
-                    repository,
+                // TODO a bit backwards
+                let tag = if tag == "latest" { None } else { Some(tag) };
+
+                let options = release_downloader::DownloadOptions {
                     tag,
                     pattern,
                     github_token,
                     trace,
-                )?;
+                    match_architecture,
+                };
+
+                let out =
+                    get_asset_urls_and_names_from_github_releases(owner, repository, options)?;
 
                 if out.is_empty() {
                     eprintln!("no assets matching {pattern:?}");
@@ -100,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Downloading {url:?}");
                     }
                     let content = download_from_github(&url, github_token)?;
-                    write_binary(&destination, &name, content, trace)?;
+                    write_binary(&destination, &name, content, only_binaries, trace)?;
                 }
             }
         }

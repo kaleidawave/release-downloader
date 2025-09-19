@@ -20,7 +20,11 @@ path = "main.rs"
 [features]
 default = ["decompress"]
 self-update = ["dep:self-replace"]
-decompress = ["dep:flate2", "dep:tar", "dep:zip"]
+decompress = [
+	"dep:flate2",
+	"dep:tar",
+	"dep:zip"
+]
 
 [dependencies]
 # Decompression utilities
@@ -35,12 +39,15 @@ simple-json-parser = "0.0.5"
 self-replace = { version = "1.5", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-zip = { version = "5", optional = true, default-features = false, features = [
+zip.version = "5"
+zip.optional = true
+zip.default-features = false
+zip.features = [
 	"bzip2",
 	"deflate",
 	"lzma",
-	"zstd",
-] }
+	"zstd"
+]
 
 # [patch.crates-io]
 # mashrl = { path = "../../../experiments/simple-http-requester/mashrl" }
