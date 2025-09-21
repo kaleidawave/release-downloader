@@ -265,20 +265,19 @@ pub fn write_binary(
         #[cfg(not(windows))]
         panic!("cannot unzip on `not(windows)`")
     } else {
-        let mut options = File::options();
-        options.write(true).truncate(true).read(true).create(true);
-        let mut file = options.open(path)?;
-        std::io::copy(&mut reader, &mut file)?;
-
         if trace {
             eprintln!("Writing to {path:?}");
         }
+
+        let mut options = File::options();
+        options.write(true).truncate(true).read(true).create(true);
+        let mut file = options.open(path)?;
 
         #[cfg(unix)]
         {
             let mut buf = [0; 4];
             // Ignore error here, some files have size < 4
-            let _read_result = file.read_exact(&mut buf);
+            let _read_result = reader.read_exact(&mut buf);
             let is_binary = &buf == b"\x7fELF"
                 || u32::from_le_bytes(buf) == 0xFEEDFACFu32
                 || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
@@ -288,7 +287,12 @@ pub fn write_binary(
                     <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777);
                 file.set_permissions(permission)?;
             }
+
+            // Compensate for lost bytes
+            std::io::copy(&mut buf.as_slice(), &mut file)?;
         }
+
+        std::io::copy(&mut reader, &mut file)?;
     }
 
     Ok(())
