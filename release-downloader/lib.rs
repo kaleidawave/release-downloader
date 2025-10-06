@@ -248,10 +248,11 @@ pub fn write_binary(
     let path = Path::new(&p);
     let to = Path::new(to);
 
+    #[cfg(feature = "decompress")]
     if name.ends_with(".tar.gz") {
-        extract_tar_gz(reader, to, only_binaries, trace)?;
+        return extract_tar_gz(reader, to, only_binaries, trace);
     } else if name.ends_with(".tar") {
-        extract_tar(reader, to, only_binaries, trace)?;
+        return extract_tar(reader, to, only_binaries, trace);
     } else if name.ends_with(".zip") {
         #[cfg(windows)]
         {
@@ -259,41 +260,41 @@ pub fn write_binary(
             let mut buffer = Vec::new();
             reader.read_to_end(&mut buffer)?;
             let reader = std::io::Cursor::new(&buffer);
-            extract_zip(reader, to, only_binaries, trace)
-        }?;
+            return extract_zip(reader, to, only_binaries, trace);
+        };
 
         #[cfg(not(windows))]
         panic!("cannot unzip on `not(windows)`")
-    } else {
-        if trace {
-            eprintln!("Writing to {path:?}");
-        }
+    } 
 
-        let mut options = File::options();
-        options.write(true).truncate(true).read(true).create(true);
-        let mut file = options.open(path)?;
-
-        #[cfg(unix)]
-        {
-            let mut buf = [0; 4];
-            // Ignore error here, some files have size < 4
-            let _read_result = reader.read_exact(&mut buf);
-            let is_binary = &buf == b"\x7fELF"
-                || u32::from_le_bytes(buf) == 0xFEEDFACFu32
-                || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
-
-            if is_binary {
-                let permission =
-                    <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777);
-                file.set_permissions(permission)?;
-            }
-
-            // Compensate for lost bytes
-            std::io::copy(&mut buf.as_slice(), &mut file)?;
-        }
-
-        std::io::copy(&mut reader, &mut file)?;
+    if trace {
+        eprintln!("Writing to {path:?}");
     }
+
+    let mut options = File::options();
+    options.write(true).truncate(true).read(true).create(true);
+    let mut file = options.open(path)?;
+
+    #[cfg(unix)]
+    {
+        let mut buf = [0; 4];
+        // Ignore error here, some files have size < 4
+        let _read_result = reader.read_exact(&mut buf);
+        let is_binary = &buf == b"\x7fELF"
+            || u32::from_le_bytes(buf) == 0xFEEDFACFu32
+            || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
+
+        if is_binary {
+            let permission =
+                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o777);
+            file.set_permissions(permission)?;
+        }
+
+        // Compensate for lost bytes
+        std::io::copy(&mut buf.as_slice(), &mut file)?;
+    }
+
+    std::io::copy(&mut reader, &mut file)?;
 
     Ok(())
 }
@@ -339,6 +340,7 @@ pub fn move_if_binary(
     Ok(())
 }
 
+#[cfg(feature = "decompress")]
 pub fn extract_tar(
     reader: impl Read,
     output_dir: &Path,
@@ -358,6 +360,7 @@ pub fn extract_tar(
     Ok(())
 }
 
+#[cfg(feature = "decompress")]
 pub fn extract_tar_gz(
     reader: impl Read,
     output_dir: &Path,
@@ -368,7 +371,7 @@ pub fn extract_tar_gz(
     extract_tar(decompressor, output_dir, only_binaries, trace)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "decompress"))]
 pub fn extract_zip(
     reader: impl Read + std::io::Seek,
     output_dir: &Path,
