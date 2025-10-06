@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "release-downloader"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "flate2",
  "mashrl",
