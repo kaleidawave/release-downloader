@@ -25,18 +25,13 @@ jobs:
     needs: check
 
     permissions: write-all
-
     runs-on: ubuntu-latest
-
     env: { GH_TOKEN: "${{ github.token }}" }
 
     steps:
       - id: checkout
         uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: kaleidawave/release-downloader@main
-        with: { items: "kaleidawave/crates-release-gh-action@canary[crates-release]" }
 
       - id: auth
         uses: rust-lang/crates-io-auth-action@v1
