@@ -1,15 +1,12 @@
 name: Build and publish libraries and assets
 
-on:
-  push:
-    paths:
-      - release-downloader/**
+on: { push: { paths: [release-downloader/**] } }
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
-    strategy: { matrix: { project: [rust-type-sizes] } }
+    defaults: { run: { working-directory: release-downloader } }
 
     steps:
     - uses: actions/checkout@v4
@@ -17,16 +14,13 @@ jobs:
 
     - name: Check
       run: cargo check
-      working-directory: ${{ matrix.project }}
-
+      
     - name: Test
       run: cargo test
-      working-directory: ${{ matrix.project }}
-
+      
     - name: Lint
       run: cargo clippy
-      working-directory: ${{ matrix.project }}
-  
+        
   publish-libraries:
     needs: check
 
@@ -34,16 +28,15 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      GH_TOKEN: ${{ github.token }}
+    env: { GH_TOKEN: "${{ github.token }}" }
 
     steps:
       - id: checkout
         uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
       - uses: kaleidawave/release-downloader@main
-        with:
-          items: kaleidawave/crates-release-gh-action@assets[crates-release]
+        with: { items: "kaleidawave/crates-release-gh-action@canary[crates-release]" }
 
       - id: auth
         uses: rust-lang/crates-io-auth-action@v1
@@ -66,16 +59,16 @@ jobs:
           git push origin ${{ steps.checkout.outputs.ref }}
 
       - name: Notify discord
-        uses: dusmartijngames/discord-webhook-notify@master
+        uses: rjstone/discord-webhook-notify@v2
         with:
           severity: info
           text: "Released version ${{ steps.release.outputs.new-versions-description }}"
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_ENDPOINT }}
 
   publish-assets:
-    needs: check
+    needs: publish-libraries
 
-    permissions: write-all
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
@@ -90,8 +83,8 @@ jobs:
         - os: macos-latest
           platform-name: aarch64-apple-darwin
 
-    runs-on: ${{ matrix.os }}
-
+    permissions: write-all
+    defaults: { run: { working-directory: release-downloader } }
     env:
       PROFILE: dev
       OUT: target/debug
@@ -109,14 +102,12 @@ jobs:
           echo "GIT_LAST_COMMIT=$(git log -n 1 --format="%H")" >> "$GITHUB_OUTPUT"
 
       - name: Build binary
-        working-directory: release-downloader
         run: cargo build --profile ${{ env.PROFILE }}
         env:
           GITHUB_RUN_DATE: ${{ steps.information.outputs.GITHUB_RUN_DATE }}
           GIT_LAST_COMMIT: ${{ steps.information.outputs.GIT_LAST_COMMIT }}
 
       - name: Publish binary
-        working-directory: release-downloader
         shell: bash
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
