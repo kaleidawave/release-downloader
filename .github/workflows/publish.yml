@@ -1,6 +1,6 @@
-name: Build and publish libraries and assets
+name: Check library, publish library and binaries
 
-on: { push: { paths: [release-downloader/**] } }
+on: { push: { paths: [release-downloader/**, .github/workflows/publish.yml] } }
 
 jobs:
   check:
