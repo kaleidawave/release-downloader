@@ -6,14 +6,14 @@ use simple_json_parser::{JSONKey, RootJSONValue, parse as parse_json};
 
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "windows")]
 const OS_MATCHER: &str = "windows";
 #[cfg(target_os = "linux")]
 const OS_MATCHER: &str = "linux";
 #[cfg(target_os = "macos")]
-const OS_MATCHER: &str = "macos";
+const OS_MATCHER: &str = "apple";
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const ARCH_MATCHER: &str = "x86";
@@ -22,13 +22,18 @@ const ARCH_MATCHER: &str = "arm";
 #[cfg(target_arch = "aarch64")]
 const ARCH_MATCHER: &str = "aarch64";
 
+#[must_use]
+pub fn get_architecture_specifier() -> String {
+    format!("-{ARCH_MATCHER}-{OS_MATCHER}")
+}
+
 type BoxedError = Box<dyn std::error::Error>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DownloadOptions<'a> {
     pub github_token: Option<&'a str>,
     pub trace: bool,
-    pub pattern: utilities::Pattern<'a>,
+    pub pattern: pattern::Pattern<'a>,
     pub tag: Option<&'a str>,
     pub match_architecture: bool,
 }
@@ -38,7 +43,7 @@ impl Default for DownloadOptions<'static> {
         DownloadOptions {
             github_token: None,
             trace: false,
-            pattern: utilities::Pattern::all(),
+            pattern: pattern::Pattern::all(),
             tag: None,
             match_architecture: true,
         }
@@ -50,6 +55,9 @@ fn get_assets_from_github_releases(
     repository: &str,
     options: DownloadOptions<'_>,
 ) -> Result<mashrl::HTTP::Response<'static>, BoxedError> {
+    // TODO should walk pages instead
+    const PER_PAGE: u8 = 100;
+
     let mut headers = Headers::from_iter([
         ("Accept", "application/vnd.github+json"),
         ("X-GitHub-Api-Version", "2022-11-28"),
@@ -81,14 +89,14 @@ fn get_assets_from_github_releases(
             return Err(message.into());
         }
 
-        let mut release_id = "".to_owned();
+        let mut release_id = String::new();
         let _ = parse_json(&body, |keys, value| {
             if let [JSONKey::Slice("id")] = keys {
                 let RootJSONValue::Number(value) = value else {
                     panic!("expect asset label to be string")
                 };
 
-                release_id = value.to_owned();
+                value.clone_into(&mut release_id);
 
                 // TODO break early
             }
@@ -96,9 +104,6 @@ fn get_assets_from_github_releases(
 
         release_id
     };
-
-    // TODO should walk pages instead
-    const PER_PAGE: u8 = 100;
 
     let path =
         format!("repos/{owner}/{repository}/releases/{release_id}/assets?per_page={PER_PAGE}");
@@ -139,6 +144,8 @@ pub fn get_asset_urls_and_names_from_github_releases(
                     let RootJSONValue::String(value) = value else {
                         panic!("expect asset label to be string")
                     };
+
+                    // FUTURE I don't think these are necesary
                     // let origin = value.strip_suffix("gz").unwrap_or(value);
                     // let origin = value.strip_suffix("tar").unwrap_or(value);
                     // let origin = value.strip_suffix("zip").unwrap_or(value);
@@ -175,9 +182,9 @@ pub fn get_asset_urls_and_names_from_github_releases(
                     }
                 }
                 JSONKey::Slice("name") => {
-                    if let RootJSONValue::String(name2) = value {
-                        name = name2;
-                    };
+                    if let RootJSONValue::String(name_) = value {
+                        name = name_;
+                    }
                 }
                 _key => {
                     // eprintln!("{key:?} {value:?}");
@@ -199,8 +206,8 @@ pub fn download_from_github(
     github_token: Option<&str>,
 ) -> Result<impl Read, BoxedError> {
     let mut headers = Headers::from_iter([
-        // ("Accept", "application/vnd.github+json"),
-        // ("X-GitHub-Api-Version", "2022-11-28"),
+        ("Accept", "application/vnd.github+json"),
+        ("X-GitHub-Api-Version", "2022-11-28"),
         ("User-Agent", "kaleidwave/release-downloader"),
     ]);
 
@@ -244,16 +251,46 @@ pub fn write_binary(
     only_binaries: bool,
     trace: bool,
 ) -> Result<(), BoxedError> {
-    let p = format!("{to}/{name}");
+    /// TODO more
+    fn strip_details(name: &str) -> &str {
+        if let Some(name) = name.strip_suffix("-aarch64-apple-darwin") {
+            name
+        } else if let Some(name) = name.strip_suffix("-x86_64-unknown-linux") {
+            name
+        } else if let Some(name) = name.strip_suffix("-x86_64-pc-windows") {
+            name
+        } else {
+            name
+        }
+    }
+
+    // Splitting the extension out avoids templating inner join etc
+    let (name, extension) = name
+        .strip_suffix(".exe")
+        .map_or((name, ""), |name| (name, ".exe"));
+
+    // WIP
+    let name = if let Some((before, _)) = name.rsplit_once('#') {
+        before
+    } else {
+        name
+    };
+    let name = strip_details(name);
+
+    let p = format!("{to}/{name}{extension}");
     let path = Path::new(&p);
     let to = Path::new(to);
+
+    let extension = std::path::Path::new(name).extension();
 
     #[cfg(feature = "decompress")]
     if name.ends_with(".tar.gz") {
         return extract_tar_gz(reader, to, only_binaries, trace);
-    } else if name.ends_with(".tar") {
+    } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("gz")) {
+        return extract_gz(reader, to, only_binaries, trace);
+    } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("tar")) {
         return extract_tar(reader, to, only_binaries, trace);
-    } else if name.ends_with(".zip") {
+    } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("zip")) {
         #[cfg(windows)]
         {
             // We put into `Cursor` here so reader implements `Seek`
@@ -265,10 +302,10 @@ pub fn write_binary(
 
         #[cfg(not(windows))]
         panic!("cannot unzip on `not(windows)`")
-    } 
+    }
 
     if trace {
-        eprintln!("Writing to {path:?}");
+        eprintln!("Writing to {path}", path = path.display());
     }
 
     let mut options = File::options();
@@ -281,8 +318,8 @@ pub fn write_binary(
         // Ignore error here, some files have size < 4
         let _read_result = reader.read_exact(&mut buf);
         let is_binary = &buf == b"\x7fELF"
-            || u32::from_le_bytes(buf) == 0xFEEDFACFu32
-            || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
+            || u32::from_le_bytes(buf) == 0xFEED_FACF_u32
+            || u32::from_le_bytes(buf) == 0xFEED_FACE_u32;
 
         if is_binary {
             let permission =
@@ -312,8 +349,8 @@ pub fn move_if_binary(
     // Ignore error here, some files have size < 4
     let _read_result = content.read_exact(&mut buf);
     let is_binary = &buf == b"\x7fELF"
-        || u32::from_le_bytes(buf) == 0xFEEDFACFu32
-        || u32::from_le_bytes(buf) == 0xFEEDFACEu32;
+        || u32::from_le_bytes(buf) == 0xFEED_FACF_u32
+        || u32::from_le_bytes(buf) == 0xFEED_FACE_u32;
 
     if only_binaries && !is_binary {
         return Ok(());
@@ -334,7 +371,7 @@ pub fn move_if_binary(
     }
 
     if trace {
-        eprintln!("Writing to {path:?}");
+        eprintln!("Writing to {path}", path = path.display());
     }
 
     Ok(())
@@ -358,6 +395,28 @@ pub fn extract_tar(
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "decompress")]
+pub fn extract_gz(
+    reader: impl Read,
+    path: &Path,
+    only_binaries: bool,
+    trace: bool,
+) -> Result<(), BoxedError> {
+    let entry = flate2::read::GzDecoder::new(reader);
+    let new_path: PathBuf;
+    let filename = if let Some(header) = entry.header()
+        && let Some(filename) = header.filename()
+    {
+        let content = str::from_utf8(filename).expect("gzip filename not str");
+        let name: PathBuf = content.parse().expect("gzip filename not path");
+        new_path = path.join(name);
+        &new_path
+    } else {
+        path
+    };
+    move_if_binary(entry, filename, only_binaries, trace)
 }
 
 #[cfg(feature = "decompress")]
@@ -434,7 +493,7 @@ pub fn get_statistics(
                 JSONKey::Slice("name") => {
                     if let RootJSONValue::String(name2) = value {
                         name = name2;
-                    };
+                    }
                 }
                 _key => {
                     // eprintln!("{key:?} {value:?}");
@@ -446,23 +505,26 @@ pub fn get_statistics(
     Ok(items)
 }
 
-pub mod utilities {
+pub mod pattern {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Pattern<'a>(&'a str);
 
     impl<'a> Pattern<'a> {
+        #[must_use]
         pub fn new(pattern: &'a str) -> Self {
             Self(pattern)
         }
 
+        #[must_use]
         pub fn all() -> Self {
             Self("*")
         }
 
-        // TODO temp
+        /// WIP, what about patterns with both `|` and `*`
+        #[must_use]
         pub fn matches(&self, value: &str) -> bool {
-            if let "*" = self.0 {
-                true
+            if let Some((left, right)) = self.0.split_once('*') {
+                value.starts_with(left) && value.ends_with(right)
             } else {
                 for part in self.0.split('|') {
                     if value.contains(part) {
@@ -471,6 +533,48 @@ pub mod utilities {
                 }
                 false
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Pattern;
+
+        #[test]
+        fn basic() {
+            let pattern = Pattern::new("x");
+            assert!(pattern.matches("x"));
+            assert!(!pattern.matches("y"));
+        }
+
+        #[test]
+        fn one_of() {
+            let pattern = Pattern::new("x|z");
+            assert!(pattern.matches("x"));
+            assert!(!pattern.matches("y"));
+            assert!(pattern.matches("z"));
+        }
+
+        #[test]
+        fn asterisk() {
+            let pattern = Pattern::new("*");
+            assert!(pattern.matches("x"));
+            assert!(pattern.matches("asdhsauhd asdsad"));
+
+            let pattern = Pattern::new("x*y");
+            assert!(pattern.matches("xy"));
+            assert!(pattern.matches("xjashdashdy"));
+            assert!(!pattern.matches("xyz"));
+
+            let pattern = Pattern::new("*y");
+            assert!(pattern.matches("xy"));
+            assert!(pattern.matches("gashdashdy"));
+            assert!(!pattern.matches("byz"));
+
+            let pattern = Pattern::new("p*");
+            assert!(pattern.matches("pxy"));
+            assert!(pattern.matches("pgashdashdy"));
+            assert!(!pattern.matches("byz"));
         }
     }
 }

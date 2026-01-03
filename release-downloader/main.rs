@@ -1,9 +1,9 @@
 use std::env;
 use std::fs;
+use std::path::PathBuf;
 
 use release_downloader::{
-    download_from_github, get_asset_urls_and_names_from_github_releases, utilities::Pattern,
-    write_binary,
+    download_from_github, get_asset_urls_and_names_from_github_releases, pattern, write_binary,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let tag = arguments.next();
             let options = release_downloader::DownloadOptions {
                 tag: tag.as_deref(),
-                pattern: Pattern::all(),
+                pattern: pattern::Pattern::all(),
                 github_token: None,
                 trace: false,
                 match_architecture: false,
@@ -50,43 +50,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 env::vars().find_map(|(name, value)| (name == "GH_TOKEN").then_some(value));
             let github_token = github_token.as_deref();
 
-            let home = env::vars().find_map(|(name, value)| (name == "HOME").then_some(value));
+            let mut trace: bool = false;
+            let mut match_architecture: bool = true;
+            let mut only_binaries: bool = true;
+            let mut specified_destination: Option<String> = None;
 
-            let mut trace = false;
-            let mut match_architecture = true;
-            let mut only_binaries = true;
-            let mut specified_destination = None;
-
-            for argument in arguments {
-                if "--trace" == argument {
+            for option in arguments {
+                if "--trace" == option {
                     trace = true;
-                } else if "--ignore-architecture" == argument {
+                } else if "--ignore-architecture" == option {
                     match_architecture = false;
-                } else if "--all-assets" == argument {
+                } else if "--all-assets" == option {
                     only_binaries = false;
                 } else {
-                    specified_destination = Some(argument);
+                    specified_destination = Some(option);
                 }
             }
 
-            let destination = if let Some(path) = specified_destination {
-                std::borrow::Cow::Owned(path)
-            } else if let Some(home) = home {
-                let path = if cfg!(unix) {
-                    format!("{home}/.local/bin")
+            let destination: PathBuf = if let Some(path) = specified_destination {
+                PathBuf::from(path)
+            } else if let Some(home) = env::home_dir() {
+                if cfg!(unix) {
+                    home.join(".local").join("bin")
                 } else {
-                    format!("{home}/.tools")
-                };
-                std::borrow::Cow::Owned(path)
+                    home.join(".tools")
+                }
             } else {
-                // TODO ?
-                std::borrow::Cow::Borrowed(".")
+                env::current_dir().unwrap()
             };
 
-            fs::create_dir_all(&*destination)?;
+            fs::create_dir_all(&destination)?;
+
+            // FUTURE could be better
+            let destination = destination.display().to_string();
 
             for argument in argument.split(',').map(str::trim) {
-                let (owner, repository, tag, pattern) = utilities::parse_pattern(argument);
+                let (owner, repository, tag, pattern) =
+                    input::parse_specifiers_and_pattern(argument);
 
                 let options = release_downloader::DownloadOptions {
                     tag,
@@ -100,10 +100,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     get_asset_urls_and_names_from_github_releases(owner, repository, options)?;
 
                 if out.is_empty() {
-                    eprintln!("no assets matching {pattern:?}");
+                    if match_architecture {
+                        let specifier = release_downloader::get_architecture_specifier();
+                        eprintln!("no assets matching {pattern:?} for architecture {specifier:?}");
+                    } else {
+                        eprintln!("no assets matching {pattern:?}");
+                    }
                 }
 
-                for (name, url) in out.into_iter() {
+                for (name, url) in out {
                     if trace {
                         eprintln!("Downloading {url:?}");
                     }
@@ -116,8 +121,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-mod utilities {
-    use super::Pattern;
+mod input {
+    use release_downloader::pattern::Pattern;
 
     pub fn split_once_inclusive<'a>(on: &'a str, chr: &[char]) -> Option<(&'a str, &'a str)> {
         on.find(chr).map(|idx| on.split_at(idx))
@@ -131,7 +136,7 @@ mod utilities {
         }
     }
 
-    pub fn parse_pattern(on: &str) -> (&str, &str, Option<&str>, Pattern<'_>) {
+    pub fn parse_specifiers_and_pattern(on: &str) -> (&str, &str, Option<&str>, Pattern<'_>) {
         let (owner, rest) = on.split_once('/').unwrap();
         let (repository, rest) = split_once_inclusive(rest, &['@', '[']).unwrap_or((rest, ""));
         let (tag, rest) = if let Some(after) = rest.strip_prefix('@') {
@@ -151,30 +156,30 @@ mod utilities {
     }
 
     #[cfg(test)]
-    mod pattern {
-        use super::{Pattern, parse_pattern};
+    mod tests {
+        use super::{Pattern, parse_specifiers_and_pattern};
 
         #[test]
         fn full() {
-            let out = parse_pattern("a/b@c[d]");
+            let out = parse_specifiers_and_pattern("a/b@c[d]");
             assert_eq!(out, ("a", "b", Some("c"), Pattern::new("d")));
         }
 
         #[test]
         fn elided_tag() {
-            let out = parse_pattern("a/b[d]");
+            let out = parse_specifiers_and_pattern("a/b[d]");
             assert_eq!(out, ("a", "b", None, Pattern::new("d")));
         }
 
         #[test]
         fn elided_specifier() {
-            let out = parse_pattern("a/b@c");
+            let out = parse_specifiers_and_pattern("a/b@c");
             assert_eq!(out, ("a", "b", Some("c"), Pattern::all()));
         }
 
         #[test]
         fn elided_specifier_and_tag() {
-            let out = parse_pattern("a/b");
+            let out = parse_specifiers_and_pattern("a/b");
             assert_eq!(out, ("a", "b", None, Pattern::all()));
         }
     }
