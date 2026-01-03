@@ -22,6 +22,8 @@ jobs:
       run: cargo clippy
         
   publish-libraries:
+    if: false
+
     needs: check
 
     permissions: write-all
@@ -61,7 +63,7 @@ jobs:
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK_ENDPOINT }}
 
   publish-assets:
-    needs: publish-libraries
+    needs: check
 
     runs-on: ${{ matrix.os }}
 
