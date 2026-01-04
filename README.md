@@ -1,1 +1,3 @@
-- Downloads releases from GitHub repositories
+Downloads releases from GitHub repositories
+
+Example: `*owner*/*repository*@*tag*[*name*]`. Comma delimeted

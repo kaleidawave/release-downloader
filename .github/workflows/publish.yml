@@ -1,0 +1,114 @@
+name: Check library, publish library and binaries
+
+on: { push: { paths: [release-downloader/**, .github/workflows/publish.yml] } }
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    defaults: { run: { working-directory: release-downloader } }
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Check
+      run: cargo check
+      
+    - name: Test
+      run: cargo test
+      
+    - name: Lint
+      run: cargo clippy
+        
+  publish-libraries:
+    if: false
+
+    needs: check
+
+    permissions: write-all
+    runs-on: ubuntu-latest
+    env: { GH_TOKEN: "${{ github.token }}" }
+
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - id: release
+        name: Crates publish
+        uses: kaleidawave/crates-release-gh-action@improvements
+        with:
+          # $ {{ github.event.inputs.version }}
+          version: patch
+          crates-token: ${{ steps.auth.outputs.token }}
+          working-directory: release-downloader
+
+      - name: Push updated Cargo.toml
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "Release: ${{ steps.release.outputs.new-version }}"
+          git push origin ${{ steps.checkout.outputs.ref }}
+
+      - name: Notify discord
+        uses: rjstone/discord-webhook-notify@v2
+        with:
+          severity: info
+          text: "Released version ${{ steps.release.outputs.new-versions-description }}"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_ENDPOINT }}
+
+  publish-assets:
+    needs: check
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+        - os: windows-latest
+          platform-name: x86_64-pc-windows
+          executable-extension: ".exe"
+        - os: ubuntu-latest
+          platform-name: x86_64-unknown-linux
+        - os: macos-latest
+          platform-name: aarch64-apple-darwin
+
+    permissions: write-all
+    defaults: { run: { working-directory: release-downloader } }
+    env:
+      PROFILE: dev
+      OUT: target/debug
+      GH_RELEASE: assets
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Set variables
+        shell: bash
+        id: information
+        run: |
+          echo "GITHUB_RUN_DATE=$(TZ="Europe/London" date +"%Y-%m-%d %T")" >> "$GITHUB_OUTPUT"
+          echo "GIT_LAST_COMMIT=$(git log -n 1 --format="%H")" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        run: cargo build --profile ${{ env.PROFILE }}
+        env:
+          GITHUB_RUN_DATE: ${{ steps.information.outputs.GITHUB_RUN_DATE }}
+          GIT_LAST_COMMIT: ${{ steps.information.outputs.GIT_LAST_COMMIT }}
+
+      - name: Publish binary
+        shell: bash
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          FROM='./${{ env.OUT }}/release-downloader${{ matrix.executable-extension }}'
+          TO='release-downloader-${{ matrix.platform-name }}${{ matrix.executable-extension }}'
+          mv $FROM $TO
+          gh release upload $GH_RELEASE "$TO" --clobber

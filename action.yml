@@ -9,36 +9,50 @@ inputs:
   items:
     description: A comma separated list of items to download
     required: true
+  trace:
+    description: Whether to log what is being downloaded
+    required: false
+    default: 'false'
 
 runs:
-  using: "composite"
+  using: composite
   steps:
-  - id: run
-    run: |
-      IFS=',' read -ra entries <<< '${{ inputs.items }}'
-
-      mkdir bin
-
-      # Loop through each entry
-      for entry in "${entries[@]}"; do
-        # Extract owner and the rest
-        owner="${entry%%/*}"
-        rest="${entry#*/}"
-
-        # Extract repository and the rest
-        repository="${rest%%@*}"
-        rest="${rest#*@}"
-
-        # Extract version and item
-        version="${rest%%[*}"
-        item="${rest#*[}"
-        item="${item%]}"  # remove trailing ]
-
-        gh release download -R "$owner/$repository" $version -p $item -D bin
-
-        # TODO only if binary
-        chmod +x "./bin/$item"
-      done
-
-      echo "$(pwd)/bin" >> "$GITHUB_PATH"
+  - id: run-linux
     shell: bash
+    if: ${{ runner.os == 'Linux' || runner.os == 'macOS' }}
+    run: |
+      mkdir -p "$HOME/.local/bin"
+      echo "$HOME/.local/bin" > "$GITHUB_PATH"
+
+      repository="kaleidawave/release-downloader"
+      release_id="assets"
+      asset="release-downloader-x86_64-unknown-linux"
+
+      curl -L "https://github.com/$repository/releases/download/$release_id/$asset" > "$HOME/.local/bin/release-downloader"
+      chmod +x "$HOME/.local/bin/release-downloader"
+
+      if [ "${{ inputs.trace }}" == "true" ]; then
+        echo "Running on unix"
+        release-downloader '${{ inputs.items }}' --trace
+      else
+        release-downloader '${{ inputs.items }}'
+      fi
+
+  - id: run-windows
+    shell: bash
+    if: ${{ runner.os == 'Windows' }}
+    run: |
+      mkdir "$HOME/.local/bin"
+      
+      repository="kaleidawave/release-downloader"
+      release_id="assets"
+      asset="release-downloader-x86_64-pc-windows.exe"
+
+      curl -L "https://github.com/$repository/releases/download/$release_id/$asset" > "$HOME/.local/bin/release-downloader.exe"
+
+      if [ "${{ inputs.trace }}" == "true" ]; then
+        echo "Running on Windows"
+        release-downloader '${{ inputs.items }}' --trace
+      else
+        release-downloader '${{ inputs.items }}'
+      fi
