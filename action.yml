@@ -28,7 +28,7 @@ runs:
       release_id="assets"
       asset="release-downloader-x86_64-unknown-linux"
 
-      curl -L 'https://github.com/$repository/releases/download/$release_id/$asset' > "$HOME/.local/bin/release-downloader"
+      curl -L "https://github.com/$repository/releases/download/$release_id/$asset" > "$HOME/.local/bin/release-downloader"
       chmod +x "$HOME/.local/bin/release-downloader"
 
       if [ "${{ inputs.trace }}" == "true" ]; then
@@ -48,7 +48,7 @@ runs:
       release_id="assets"
       asset="release-downloader-x86_64-pc-windows.exe"
 
-      curl -L 'https://github.com/$repository/releases/download/$release_id/$asset' > "$HOME/.local/bin/release-downloader.exe"
+      curl -L "https://github.com/$repository/releases/download/$release_id/$asset" > "$HOME/.local/bin/release-downloader.exe"
 
       if [ "${{ inputs.trace }}" == "true" ]; then
         echo "Running on Windows"
